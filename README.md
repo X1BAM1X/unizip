@@ -157,7 +157,7 @@ If a command is missing, the corresponding format reports the missing command. F
 ## Building
 
 ```bash
-git clone <repository-url> unizip
+git clone https://github.com/X1BAM1X/unizip.git
 cd unizip
 make
 ```
