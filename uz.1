@@ -1,0 +1,108 @@
+.TH UZ 1 "2026-11-20" "uz 0.1.0" "User Commands"
+.SH NAME
+uz \- unified archive extraction dispatcher
+.SH SYNOPSIS
+.B uz
+[\fIOPTIONS\fR] \fIARCHIVE\fR [\fIDESTINATION\fR]
+.SH DESCRIPTION
+.B uz
+detects the archive format from its magic bytes and dispatches to the
+system's own extraction tools. It does not link against compression
+libraries and does not implement decompression itself.
+.PP
+Without
+.B \-o
+or a destination argument, container archives are extracted into a
+directory named after the archive in the archive's own directory.
+Bare compressed streams are written into the archive's directory as a
+single file.
+.PP
+Compressed tar streams are recognized by suffix, for example
+(\&.tar.gz, .tgz, .tar.xz, .tar.bz2, .tar.zst, .tar.lz4, .tar.lz, .tar.lzma),
+and extracted with
+.BR tar .
+Bare compressed streams such as a single
+.B .gz
+file are decompressed to one file inside
+.IR DESTINATION .
+.SH OPTIONS
+.TP
+.BR \-o ", " \-\-output " " \fIDIR\fR
+Extract into
+.IR DIR .
+The directory is created if needed. The default is a directory named
+after the archive, next to the archive.
+.TP
+.BR \-f ", " \-\-force
+Overwrite existing files for zip, 7z, rar/unar and bare compressed streams.
+Without this option those formats skip or refuse to overwrite.
+.TP
+.BR \-l ", " \-\-list
+List archive contents instead of extracting.
+.TP
+.BR \-t ", " \-\-test
+Test archive integrity instead of extracting.
+.TP
+.BR \-q ", " \-\-quiet
+Suppress output from external commands.
+.TP
+.BR \-v ", " \-\-verbose
+Print the detected format and the exact command lines executed.
+Password arguments are shown as
+.BR *** .
+.TP
+.BR \-p ", " \-\-password " " \fIPW\fR
+Password for encrypted zip, 7z and rar archives.
+.TP
+.BR \-h ", " \-\-help
+Show help.
+.TP
+.BR \-V ", " \-\-version
+Show version.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Usage error or invalid arguments.
+.TP
+.B 2
+Extraction, listing or integrity test failed.
+.TP
+.B 3
+A required external command is missing.
+.TP
+.B 4
+Internal error such as memory allocation or process setup failure.
+.SH EXAMPLES
+.TP
+.B uz archive.zip out/
+Extract a zip archive into
+.IR out/ .
+.TP
+.B uz -l archive.tar.xz
+List the contents of a compressed tar archive.
+.TP
+.B uz -t package.7z
+Test a 7z archive.
+.TP
+.B uz -p secret encrypted.rar restored/
+Extract an encrypted rar archive.
+.TP
+.B uz -o dest -- -hidden.tar.gz
+Extract an archive whose name starts with a hyphen.
+.SH NOTES
+.B uz
+reads no configuration files, keeps no state and performs no network access.
+It invokes commands found in
+.BR PATH .
+.PP
+Compressed tar streams require GNU tar's
+.B \-I
+option.
+.SH SEE ALSO
+.BR tar (1),
+.BR unzip (1),
+.BR 7z (1),
+.BR unrar (1)
