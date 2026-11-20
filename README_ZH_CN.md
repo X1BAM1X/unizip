@@ -166,7 +166,7 @@ sudo apk add unzip unrar 7zip tar gzip bzip2 xz zstd lz4 lzip
 ## 编译
 
 ```bash
-git clone <仓库地址> unizip
+git clone https://github.com/X1BAM1X/unizip.git
 cd unizip
 make
 ```
