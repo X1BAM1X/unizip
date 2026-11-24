@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-24
+
+### Fixed
+- Child stdin is connected to `/dev/null`, so encrypted zip/7z archives fail instead of waiting for a password
+- Failed bare-stream extraction removes the partial output file
+- Existing bare-stream output is skipped without `-f`, matching zip/7z/rar behavior
+- Destination creation failures are reported instead of being ignored
+- unrar and lsar password options are allocated dynamically, so long passwords are not truncated
+- `write()` returning zero no longer causes an infinite loop
+- Bare-stream output is written through a temporary file and atomically renamed; symlinks are refused
+- `.001` split archives uniformly require 7z instead of partially falling back to `unrar`
+- rar listing and testing fall back to `lsar` when `unrar` is unavailable
+- `unrar-free` is detected and falls back to `unar`/`lsar` or 7z
+- Default directory naming strips `.partN`, `.rNN`, `.zNN` and `.001` volume suffixes
+- `--password=PASSWORD` is parsed correctly instead of being rejected as an unknown option
+
+### Changed
+- Common compressed tar streams use tar's own auto-detection; zstd/lz4/lzip still use `tar -I`
+- Documented password exposure through child process arguments
+- Added `make test` and a self-contained `tests/run.sh`
+- Added `SECURITY.md`
+
 ## [0.1.0] - 2026-11-20
 
 First public release.

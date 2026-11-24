@@ -102,8 +102,8 @@ static int parse_args(int argc, char **argv, const char **archive,
                     return -1;
                 }
                 *password = argv[i];
-            } else if (strncmp(arg, "--password=", 12) == 0) {
-                *password = arg + 12;
+            } else if (strncmp(arg, "--password=", 11) == 0) {
+                *password = arg + 11;
             } else {
                 fprintf(stderr, "uz: unknown option '%s'\n", arg);
                 usage(stderr, argv[0]);

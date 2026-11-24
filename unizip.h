@@ -5,7 +5,7 @@
 
 #include <stddef.h>
 
-#define UZ_VERSION "0.1.0"
+#define UZ_VERSION "0.1.1"
 #define UZ_MAGIC_CAP 512
 
 typedef enum {

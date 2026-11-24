@@ -58,6 +58,44 @@ static const char *seven_zip(void)
     return uz_pick_command(candidates);
 }
 
+/* unrar-free shares the name but is not fully command-line compatible. */
+static int unrar_is_free(void)
+{
+    static int cached = -1;
+
+    if (cached >= 0) {
+        return cached;
+    }
+
+    cached = 0;
+    FILE *fp = popen("unrar 2>&1", "r");
+    if (fp) {
+        char buf[512];
+        size_t n = fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        pclose(fp);
+        if (strstr(buf, "unrar-free")) {
+            cached = 1;
+        }
+    }
+    return cached;
+}
+
+static char *password_option(const char *password)
+{
+    if (!password || !*password) {
+        return NULL;
+    }
+
+    size_t len = strlen(password) + 3;
+    char *opt = malloc(len);
+    if (!opt) {
+        return NULL;
+    }
+    snprintf(opt, len, "-p%s", password);
+    return opt;
+}
+
 static int run(char *const argv[], int quiet)
 {
     trace_command(argv);
@@ -121,13 +159,11 @@ static int handle_7z(const char *path, const char *dest, int force,
     argv[i++] = (char *)path;
 
     if (password && *password) {
-        size_t len = strlen(password) + 3;
-        pw_opt = malloc(len);
+        pw_opt = password_option(password);
         if (!pw_opt) {
             fprintf(stderr, "uz: out of memory\n");
             return 126;
         }
-        snprintf(pw_opt, len, "-p%s", password);
         argv[i++] = pw_opt;
     }
 
@@ -152,10 +188,11 @@ static int handle_rar(const char *path, const char *dest, int force,
                       int quiet, const char *password)
 {
     char *argv[10];
-    char pw_opt[256];
+    char *pw_opt = NULL;
     int i = 0;
+    int rc;
 
-    if (uz_command_exists("unrar")) {
+    if (uz_command_exists("unrar") && !unrar_is_free()) {
         argv[i++] = "unrar";
         argv[i++] = "x";
         argv[i++] = force ? "-o+" : "-o-";
@@ -163,23 +200,27 @@ static int handle_rar(const char *path, const char *dest, int force,
         argv[i++] = (char *)dest;
 
         if (password && *password) {
-            snprintf(pw_opt, sizeof(pw_opt), "-p%s", password);
+            pw_opt = password_option(password);
+            if (!pw_opt) {
+                fprintf(stderr, "uz: out of memory\n");
+                return 126;
+            }
             argv[i++] = pw_opt;
         } else {
             argv[i++] = "-p-";
         }
 
         argv[i] = NULL;
-        return run(argv, quiet);
+        rc = run(argv, quiet);
+        free(pw_opt);
+        return rc;
     }
 
     if (uz_command_exists("unar")) {
         argv[i++] = "unar";
         argv[i++] = "-o";
         argv[i++] = (char *)dest;
-        if (force) {
-            argv[i++] = "-f";
-        }
+        argv[i++] = force ? "-f" : "-s";
         if (password && *password) {
             argv[i++] = "-p";
             argv[i++] = (char *)password;
@@ -201,11 +242,11 @@ static const char *tar_filter(uz_format_t fmt)
 {
     switch (fmt) {
     case UZ_FORMAT_GZIP:
-    case UZ_FORMAT_COMPRESS:
-        return "gzip";
     case UZ_FORMAT_BZIP2:
-        return "bzip2";
     case UZ_FORMAT_XZ:
+    case UZ_FORMAT_COMPRESS:
+        /* tar auto-detects these; avoids requiring GNU tar's -I. */
+        return NULL;
     case UZ_FORMAT_LZMA:
         return "xz";
     case UZ_FORMAT_ZSTD:
@@ -299,10 +340,10 @@ static int run_stream(char *const argv[], const char *path, const char *dest,
     }
 
     if (!force && uz_file_exists(outfile)) {
-        fprintf(stderr, "uz: %s already exists (use -f to overwrite)\n",
+        fprintf(stderr, "uz: %s already exists, skipping (use -f to overwrite)\n",
                 outfile);
         free(outfile);
-        return 1;
+        return 0;
     }
 
     rc = uz_run_to_file(argv, outfile, quiet);
@@ -426,8 +467,9 @@ static int list_archive(const uz_archive_t *arc, const char *path,
                         const char *dest, const char *password)
 {
     char *argv[10];
-    char pw_opt[256];
+    char *pw_opt = NULL;
     int i = 0;
+    int rc;
     const char *tool;
 
     switch (arc->format) {
@@ -449,14 +491,30 @@ static int list_archive(const uz_archive_t *arc, const char *path,
         if (is_split_archive(path)) {
             break;
         }
-        if (uz_command_exists("unrar")) {
+        if (uz_command_exists("unrar") && !unrar_is_free()) {
             argv[i++] = "unrar";
             argv[i++] = "l";
             if (password && *password) {
-                snprintf(pw_opt, sizeof(pw_opt), "-p%s", password);
+                pw_opt = password_option(password);
+                if (!pw_opt) {
+                    fprintf(stderr, "uz: out of memory\n");
+                    return 126;
+                }
                 argv[i++] = pw_opt;
             } else {
                 argv[i++] = "-p-";
+            }
+            argv[i++] = (char *)path;
+            argv[i] = NULL;
+            rc = run(argv, 0);
+            free(pw_opt);
+            return rc;
+        }
+        if (uz_command_exists("lsar")) {
+            argv[i++] = "lsar";
+            if (password && *password) {
+                argv[i++] = "-p";
+                argv[i++] = (char *)password;
             }
             argv[i++] = (char *)path;
             argv[i] = NULL;
@@ -510,12 +568,18 @@ static int list_archive(const uz_archive_t *arc, const char *path,
     argv[i++] = (char *)tool;
     argv[i++] = "l";
     if (password && *password) {
-        snprintf(pw_opt, sizeof(pw_opt), "-p%s", password);
+        pw_opt = password_option(password);
+        if (!pw_opt) {
+            fprintf(stderr, "uz: out of memory\n");
+            return 126;
+        }
         argv[i++] = pw_opt;
     }
     argv[i++] = (char *)path;
     argv[i] = NULL;
-    return run(argv, 0);
+    rc = run(argv, 0);
+    free(pw_opt);
+    return rc;
 }
 
 static int test_stream(const char *path, uz_format_t fmt, int quiet)
@@ -560,8 +624,9 @@ static int test_archive(const uz_archive_t *arc, const char *path,
                         int quiet, const char *password)
 {
     char *argv[10];
-    char pw_opt[256];
+    char *pw_opt = NULL;
     int i = 0;
+    int rc;
     const char *tool;
 
     switch (arc->format) {
@@ -583,16 +648,33 @@ static int test_archive(const uz_archive_t *arc, const char *path,
         if (is_split_archive(path)) {
             break;
         }
-        if (uz_command_exists("unrar")) {
+        if (uz_command_exists("unrar") && !unrar_is_free()) {
             argv[i++] = "unrar";
             argv[i++] = "t";
             argv[i++] = (char *)path;
             if (password && *password) {
-                snprintf(pw_opt, sizeof(pw_opt), "-p%s", password);
+                pw_opt = password_option(password);
+                if (!pw_opt) {
+                    fprintf(stderr, "uz: out of memory\n");
+                    return 126;
+                }
                 argv[i++] = pw_opt;
             } else {
                 argv[i++] = "-p-";
             }
+            argv[i] = NULL;
+            rc = run(argv, quiet);
+            free(pw_opt);
+            return rc;
+        }
+        if (uz_command_exists("lsar")) {
+            argv[i++] = "lsar";
+            argv[i++] = "-t";
+            if (password && *password) {
+                argv[i++] = "-p";
+                argv[i++] = (char *)password;
+            }
+            argv[i++] = (char *)path;
             argv[i] = NULL;
             return run(argv, quiet);
         }
@@ -635,12 +717,18 @@ static int test_archive(const uz_archive_t *arc, const char *path,
     argv[i++] = (char *)tool;
     argv[i++] = "t";
     if (password && *password) {
-        snprintf(pw_opt, sizeof(pw_opt), "-p%s", password);
+        pw_opt = password_option(password);
+        if (!pw_opt) {
+            fprintf(stderr, "uz: out of memory\n");
+            return 126;
+        }
         argv[i++] = pw_opt;
     }
     argv[i++] = (char *)path;
     argv[i] = NULL;
-    return run(argv, quiet);
+    rc = run(argv, quiet);
+    free(pw_opt);
+    return rc;
 }
 
 static char *path_dirname(const char *path)
@@ -678,16 +766,36 @@ static int strip_suffix(char *name, const char *suffix)
     return 1;
 }
 
+static int digits_only(const char *s, size_t n)
+{
+    if (n == 0) {
+        return 0;
+    }
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] < '0' || s[i] > '9') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void strip_volume_suffix(char *name)
 {
     size_t len = strlen(name);
 
-    if (len > 4 &&
-        name[len - 4] == '.' &&
-        name[len - 3] >= '0' && name[len - 3] <= '9' &&
-        name[len - 2] >= '0' && name[len - 2] <= '9' &&
-        name[len - 1] >= '0' && name[len - 1] <= '9') {
-        name[len - 4] = '\0';
+    if (len > 4 && name[len - 4] == '.') {
+        if (digits_only(name + len - 3, 3) ||
+            ((name[len - 3] == 'z' || name[len - 3] == 'r') &&
+             digits_only(name + len - 2, 2))) {
+            name[len - 4] = '\0';
+            return;
+        }
+    }
+
+    char *part = strrchr(name, '.');
+    if (part && strncmp(part + 1, "part", 4) == 0 &&
+        part[5] != '\0' && digits_only(part + 5, strlen(part + 5))) {
+        *part = '\0';
     }
 }
 
@@ -752,6 +860,7 @@ char *uz_default_dest(const char *path, uz_format_t fmt, int is_tar_wrapped)
 
     strip_volume_suffix(name);
     strip_archive_suffix(name);
+    strip_volume_suffix(name);
     if (!*name) {
         free(name);
         name = strdup("archive");
@@ -805,14 +914,14 @@ int uz_process(const uz_archive_t *arc, const char *path, const char *dest,
         return test_archive(arc, path, quiet, password);
     }
 
-    uz_mkdir_p(dest);
+    if (uz_mkdir_p(dest) != 0) {
+        perror(dest);
+        return 1;
+    }
 
     if (is_split_archive(path)) {
         if (seven_zip()) {
             return handle_7z(path, dest, force, quiet, password);
-        }
-        if (arc->format == UZ_FORMAT_RAR) {
-            return handle_rar(path, dest, force, quiet, password);
         }
         fprintf(stderr, "uz: split archives require 7z\n");
         return 127;
@@ -860,12 +969,12 @@ int is_split_archive(const char *path)
     if (len < 5) return 0;
 
     const char *suffix = base + len - 4;
-    if (suffix[0] != '.' ||
-        suffix[1] < '0' || suffix[1] > '9' ||
-        suffix[2] < '0' || suffix[2] > '9' ||
-        suffix[3] < '0' || suffix[3] > '9') {
+    if (suffix[0] != '.') {
         return 0;
     }
+    if (digits_only(suffix + 1, 3)) {
+        return 1;
+    }
 
-    return 1;
+    return 0;
 }

@@ -166,7 +166,7 @@ sudo apk add unzip unrar 7zip tar gzip bzip2 xz zstd lz4 lzip
 ## 编译
 
 ```bash
-git clone https://github.com/X1BAM1X/unizip.git
+git clone https://github.com/X1BAM1X/unizip.git unizip
 cd unizip
 make
 ```
@@ -187,6 +187,22 @@ strip uz.static   # 可选
 ```
 
 会生成 `uz.static`。glibc 静态链接体积较大；用 musl 工具链通常会小很多。构建过程不注入时间戳，源码相同的构建结果可复现。
+
+## 测试
+
+```bash
+make test
+```
+
+测试脚本会在临时目录里生成压缩包，跳过当前系统没有的工具，并检查解压内容、列表、完整性测试、选项、退出码、覆盖行为、密码、分卷和错误路径。
+
+要包含 rar 测试，用 `UZ_TEST_RAR` 指向一个样本：
+
+```bash
+UZ_TEST_RAR=/path/to/file.rar make test
+```
+
+lzip 等可选格式会在对应压缩工具存在时自动测试。
 
 ## 安装
 
@@ -213,7 +229,7 @@ uz [选项] <压缩包> [目标目录]
 | 选项 | 说明 |
 | --- | --- |
 | `-o, --output DIR` | 解压到指定目录（默认：压缩包旁边，与压缩包同名的目录） |
-| `-f, --force` | 覆盖已存在的文件 |
+| `-f, --force` | 覆盖已存在的文件（默认跳过已存在的文件） |
 | `-l, --list` | 列出压缩包内容 |
 | `-t, --test` | 测试压缩包完整性 |
 | `-p, --password STR` | 压缩包密码（适用于 zip、7z、rar） |
@@ -306,8 +322,10 @@ unizip/
 ├── README.md          # English
 ├── README_ZH_CN.md    # 简体中文
 ├── CHANGELOG.md       # 版本历史
+├── SECURITY.md        # 安全说明
 ├── uz.1               # man page
 ├── .gitignore
+├── tests/             # 测试（make test）
 └── examples/    # 示例脚本
     ├── basic-usage.sh
     ├── batch-extract.sh
@@ -319,12 +337,15 @@ unizip/
 ## 已知限制
 
 - 裸压缩流没有多文件清单：`-l` 只输出解压后的文件名，`-t` 调用对应解压器做完整性校验。
-- `-f` 影响 zip、7z、rar、unar 和裸压缩流；`tar` 的覆盖行为由它自己决定。
-- 压缩 tar（包括 `.tar.Z`）通过 `tar -I` 解压，需要 GNU tar；BusyBox tar 未验证，可能不支持。
-- 未提供 `-p` 时，rar 测试/列出/解压会给 `unrar` 传 `-p-`，遇到加密包直接失败而不是等待输入。
+- `-f` 影响 zip、7z、rar、unar 和裸压缩流；不加时跳过已存在的文件。`tar` 的覆盖行为由它自己决定。
+- 常见压缩 tar（gzip、bzip2、xz、compress）交给 tar 自动识别；zstd、lz4、lzip 使用 `tar -I`，需要 GNU tar，BusyBox tar 可能不支持。
+- 未提供 `-p` 时，子进程 stdin 接到 `/dev/null`，加密 zip/7z/rar 会直接失败而不是等待输入；rar 还会收到 `-p-`。
+- 密码会作为命令行参数传给外部工具，运行时可能被同一用户通过进程列表或 `/proc` 看到；`uz` 不存储密码，`-v` 会打码。
+- rar 在 `unrar` 为非自由实现时优先使用；检测到 `unrar-free` 时回退到 `unar`/`lsar` 或 7z。
+- `.part1.rar` 这类分卷交给 `unrar` 处理；默认目录名会去掉 `partN` 后缀。
 - `-t` 对 tar 系列只丢弃标准输出，因此解压器的错误默认可见；加 `-q` 才会一起静默。
 - 压缩 tar 只按扩展名识别；改名成 `.gz` 后会被当作裸压缩流解压成 `.tar` 文件。
-- 除密码外不接受交互式输入。
+- 不支持交互式输入，密码必须用 `-p` 提供。
 - 依赖系统命令，不同发行版上同名命令的参数兼容性可能略有差异。
 - 对未知格式会尝试调用 7z，因此非压缩文件也会得到 7z 的报错信息。
 
@@ -366,6 +387,8 @@ sudo dnf install unzip unrar 7zip tar gzip bzip2 xz zstd lz4 lzip
 ```bash
 uz -o dest -- -hidden.tar.gz
 ```
+
+密码处理和不可信压缩包的注意事项见 [SECURITY.md](SECURITY.md)。
 
 ## 贡献
 

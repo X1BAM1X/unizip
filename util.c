@@ -13,6 +13,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifndef O_NOFOLLOW
+#define O_NOFOLLOW 0
+#endif
+
 int uz_command_exists(const char *cmd)
 {
     const char *path_env = getenv("PATH");
@@ -84,10 +88,21 @@ static int wait_child(int pid)
     return 125;
 }
 
+/* uz never supports interactive child commands; do not let them wait on a tty. */
+static void redirect_stdin_devnull(void)
+{
+    int devnull = open("/dev/null", O_RDONLY);
+    if (devnull >= 0) {
+        dup2(devnull, STDIN_FILENO);
+        close(devnull);
+    }
+}
+
 int uz_run(char *const argv[])
 {
     int pid = fork();
     if (pid == 0) {
+        redirect_stdin_devnull();
         execvp(argv[0], argv);
         _exit(127);
     }
@@ -101,6 +116,7 @@ int uz_run_quiet(char *const argv[])
 {
     int pid = fork();
     if (pid == 0) {
+        redirect_stdin_devnull();
         int devnull = open("/dev/null", O_WRONLY);
         if (devnull < 0) {
             _exit(127);
@@ -121,6 +137,7 @@ int uz_run_discard_stdout(char *const argv[], int quiet)
 {
     int pid = fork();
     if (pid == 0) {
+        redirect_stdin_devnull();
         int devnull = open("/dev/null", O_WRONLY);
         if (devnull < 0) {
             _exit(127);
@@ -137,6 +154,21 @@ int uz_run_discard_stdout(char *const argv[], int quiet)
         return 126;
     }
     return wait_child(pid);
+}
+
+static int ensure_dir(const char *path)
+{
+    if (mkdir(path, 0755) == 0) {
+        return 0;
+    }
+    if (errno == EEXIST) {
+        struct stat st;
+        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            return 0;
+        }
+        errno = ENOTDIR;
+    }
+    return -1;
 }
 
 int uz_mkdir_p(const char *path)
@@ -163,7 +195,7 @@ int uz_mkdir_p(const char *path)
     for (p = tmp + 1; *p; p++) {
         if (*p == '/') {
             *p = '\0';
-            if (mkdir(tmp, 0755) && errno != EEXIST) {
+            if (ensure_dir(tmp) != 0) {
                 rc = -1;
                 goto done;
             }
@@ -171,7 +203,7 @@ int uz_mkdir_p(const char *path)
         }
     }
 
-    if (mkdir(tmp, 0755) && errno != EEXIST) {
+    if (ensure_dir(tmp) != 0) {
         rc = -1;
     }
 
@@ -231,14 +263,54 @@ char *uz_path_join(const char *dir, const char *name)
 
 int uz_run_to_file(char *const argv[], const char *outfile, int quiet)
 {
+    struct stat st;
+
+    if (lstat(outfile, &st) == 0 && S_ISLNK(st.st_mode)) {
+        fprintf(stderr, "uz: refusing to overwrite symlink: %s\n", outfile);
+        return ELOOP;
+    }
+
+    size_t tmplen = strlen(outfile) + 64;
+    char *tmpfile = malloc(tmplen);
+    if (!tmpfile) {
+        fprintf(stderr, "uz: out of memory\n");
+        return 126;
+    }
+
+    int fd = -1;
+    for (unsigned i = 0; i < 100; i++) {
+        snprintf(tmpfile, tmplen, "%s.tmp.%ld.%u",
+                 outfile, (long)getpid(), i);
+        fd = open(tmpfile, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
+        if (fd >= 0) {
+            break;
+        }
+        if (errno != EEXIST) {
+            break;
+        }
+    }
+
+    if (fd < 0) {
+        int err = errno;
+        errno = err;
+        perror(outfile);
+        free(tmpfile);
+        return err;
+    }
+
     int pipe_to_file[2];
     if (pipe(pipe_to_file) == -1) {
+        int err = errno;
         perror("pipe");
-        return 126;
+        close(fd);
+        unlink(tmpfile);
+        free(tmpfile);
+        return err;
     }
 
     int pid = fork();
     if (pid == 0) {
+        redirect_stdin_devnull();
         close(pipe_to_file[0]);
         dup2(pipe_to_file[1], STDOUT_FILENO);
         close(pipe_to_file[1]);
@@ -256,18 +328,13 @@ int uz_run_to_file(char *const argv[], const char *outfile, int quiet)
     if (pid < 0) {
         close(pipe_to_file[0]);
         close(pipe_to_file[1]);
+        close(fd);
+        unlink(tmpfile);
+        free(tmpfile);
         return 126;
     }
 
     close(pipe_to_file[1]);
-
-    int fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd == -1) {
-        int err = errno;
-        close(pipe_to_file[0]);
-        waitpid(pid, NULL, 0);
-        return err;
-    }
 
     ssize_t n;
     char buf[8192];
@@ -289,8 +356,8 @@ int uz_run_to_file(char *const argv[], const char *outfile, int quiet)
         ssize_t off = 0;
         while (off < n) {
             ssize_t written = write(fd, buf + off, (size_t)(n - off));
-            if (written < 0) {
-                if (errno == EINTR) {
+            if (written <= 0) {
+                if (written < 0 && errno == EINTR) {
                     continue;
                 }
                 io_failed = 1;
@@ -309,13 +376,29 @@ int uz_run_to_file(char *const argv[], const char *outfile, int quiet)
     int status;
     waitpid(pid, &status, 0);
 
+    int result;
     if (io_failed) {
-        return 126;
-    }
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
+        result = 126;
+    } else if (WIFEXITED(status)) {
+        result = WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
+        result = 128 + WTERMSIG(status);
+    } else {
+        result = 125;
     }
-    return 125;
+
+    if (result == 0) {
+        if (rename(tmpfile, outfile) != 0) {
+            int err = errno;
+            errno = err;
+            perror(outfile);
+            unlink(tmpfile);
+            result = err;
+        }
+    } else {
+        unlink(tmpfile);
+    }
+
+    free(tmpfile);
+    return result;
 }

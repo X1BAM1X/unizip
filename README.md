@@ -157,7 +157,7 @@ If a command is missing, the corresponding format reports the missing command. F
 ## Building
 
 ```bash
-git clone https://github.com/X1BAM1X/unizip.git
+git clone https://github.com/X1BAM1X/unizip.git unizip
 cd unizip
 make
 ```
@@ -178,6 +178,26 @@ strip uz.static   # optional
 ```
 
 This produces `uz.static`. A glibc static binary is fairly large; a musl toolchain usually produces a much smaller one. The build injects no timestamps, so identical sources produce reproducible results.
+
+## Testing
+
+```bash
+make test
+```
+
+The test suite generates fixtures in a temporary directory, skips tools that are
+not installed, and checks extraction contents, listing, integrity testing,
+options, exit codes, overwrite behavior, passwords, split archives, and error
+paths.
+
+To include rar tests, point `UZ_TEST_RAR` at a sample archive:
+
+```bash
+UZ_TEST_RAR=/path/to/file.rar make test
+```
+
+Optional formats such as lzip are tested when the corresponding compressor is
+available.
 
 ## Installation
 
@@ -204,7 +224,7 @@ uz [options] <archive> [destination]
 | Option | Description |
 | --- | --- |
 | `-o, --output DIR` | Extract into `DIR` (default: a directory named after the archive, next to it) |
-| `-f, --force` | Overwrite existing files |
+| `-f, --force` | Overwrite existing files (otherwise existing files are skipped) |
 | `-l, --list` | List archive contents |
 | `-t, --test` | Test archive integrity |
 | `-p, --password STR` | Archive password (zip, 7z, rar) |
@@ -297,8 +317,10 @@ unizip/
 ├── README.md         # English
 ├── README_ZH_CN.md   # Simplified Chinese
 ├── CHANGELOG.md      # version history
+├── SECURITY.md       # security notes
 ├── uz.1              # man page
 ├── .gitignore
+├── tests/            # test suite (make test)
 └── examples/         # example scripts
     ├── basic-usage.sh
     ├── batch-extract.sh
@@ -310,12 +332,15 @@ unizip/
 ## Known limitations
 
 - Bare compressed streams have no multi-file listing: `-l` prints the output filename, and `-t` asks the matching decompressor to validate the stream.
-- `-f` affects zip, 7z, rar, unar, and bare streams; `tar` decides its own overwrite behavior.
-- Compressed tar streams (including `.tar.Z`) are extracted through `tar -I`, which requires GNU tar. BusyBox tar is untested and may not work.
-- Without `-p`, rar listing, testing, and extraction pass `-p-` to `unrar`, so encrypted archives fail immediately instead of waiting for input.
+- `-f` affects zip, 7z, rar, unar, and bare streams; without it existing files are skipped. `tar` decides its own overwrite behavior.
+- Common compressed tar streams (gzip, bzip2, xz, compress) rely on tar's own auto-detection. zstd, lz4, and lzip streams use `tar -I`, which requires GNU tar; BusyBox tar may not support those.
+- Without `-p`, child standard input is connected to `/dev/null`, so encrypted zip/7z/rar archives fail immediately instead of waiting for input. rar also receives `-p-`.
+- Passwords are passed to external tools as command-line arguments and may be visible to other processes of the same user through process listings or `/proc`. `uz` does not store passwords; `-v` masks them.
+- rar uses `unrar` when it is the non-free implementation; `unrar-free` is detected and falls back to `unar`/`lsar` or 7z.
+- `.part1.rar` style volumes are handled by `unrar`; the default directory name strips the `partN` suffix.
 - `-t` on tar streams discards only stdout, so decompressor errors remain visible by default; `-q` silences them as well.
 - Compressed tar streams are detected by suffix only. Renaming one to `.gz` makes it a bare compressed stream that decompresses to a `.tar` file.
-- No interactive input other than passwords.
+- No interactive input. Passwords must be supplied with `-p`.
 - Behavior depends on system commands; argument compatibility may vary between distributions.
 - Unknown formats fall back to 7z, so non-archive files also produce 7z error messages.
 
@@ -356,6 +381,8 @@ Use `--` to stop option parsing:
 ```bash
 uz -o dest -- -hidden.tar.gz
 ```
+
+See [SECURITY.md](SECURITY.md) for password handling and untrusted-archive notes.
 
 ## Contributing
 

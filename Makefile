@@ -14,12 +14,15 @@ OBJ := $(SRC:.c=.o)
 BIN := uz
 STATIC_BIN := uz.static
 
-.PHONY: all clean install uninstall static
+.PHONY: all clean install uninstall static test
 
 all: $(BIN)
 
 $(BIN): $(OBJ)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJ)
+
+test: $(BIN)
+	./tests/run.sh
 
 static: $(STATIC_BIN)
 

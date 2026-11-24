@@ -1,4 +1,4 @@
-.TH UZ 1 "2026-11-20" "uz 0.1.0" "User Commands"
+.TH UZ 1 "2026-11-24" "uz 0.1.1" "User Commands"
 .SH NAME
 uz \- unified archive extraction dispatcher
 .SH SYNOPSIS
@@ -35,7 +35,7 @@ after the archive, next to the archive.
 .TP
 .BR \-f ", " \-\-force
 Overwrite existing files for zip, 7z, rar/unar and bare compressed streams.
-Without this option those formats skip or refuse to overwrite.
+Without this option existing files are skipped.
 .TP
 .BR \-l ", " \-\-list
 List archive contents instead of extracting.
@@ -98,9 +98,24 @@ reads no configuration files, keeps no state and performs no network access.
 It invokes commands found in
 .BR PATH .
 .PP
-Compressed tar streams require GNU tar's
-.B \-I
-option.
+Common compressed tar streams are left to
+.BR tar 's
+own compression detection. zstd, lz4 and lzip streams use
+.BR tar " " \-I
+and require GNU tar.
+.SH SECURITY
+Passwords are passed to external tools as command-line arguments and may be
+visible to other processes of the same user through process listings or
+.IR /proc .
+.B uz
+does not store passwords. Verbose output masks them as
+.BR *** .
+.PP
+Standard input for child processes is connected to
+.IR /dev/null ,
+so encrypted archives fail instead of waiting for a password when
+.B \-p
+is not supplied.
 .SH SEE ALSO
 .BR tar (1),
 .BR unzip (1),
